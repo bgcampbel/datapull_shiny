@@ -119,11 +119,65 @@ demo <- demo %>%
   select(masterdemoid, registration_group, registration_dob, registration_gender, age)
 
 #################################################################################
+income_1 <- PTdata %>%
+  select(masterdemoid, macarthur_6, macarthur_7) %>%
+  filter_at(vars(2,3), any_vars(!is.na(.))) %>%
+  filter(macarthur_6 != 998) %>%
+  distinct()
+income_1 <- income_1 %>% # grab the vars of interest and remove empty rows
+  mutate(income_household = income_1$macarthur_6) %>%
+  # map answers to corresponding income levels
+  mutate(income_level =  ifelse(income_1$macarthur_6 == "1", 0,
+                                ifelse(income_1$macarthur_6 == "2", 8500,
+                                       ifelse(income_1$macarthur_6 == "3", 14000, 
+                                              ifelse(income_1$macarthur_6 == "4", 20500,
+                                                     ifelse(income_1$macarthur_6 == "5", 30000,
+                                                            ifelse(income_1$macarthur_6 == "6", 42500,
+                                                                   ifelse(income_1$macarthur_6 == "7", 62500,   
+                                                                          ifelse(income_1$macarthur_6 == "8", 87500, 100000)
+                                                                   )
+                                                            )
+                                                     )
+                                              )
+                                       )
+                                )
+  )
+  )
+# calculate income per capita
+income_1$incomePerCapita = income_1$income_level / income_1$macarthur_7
+# change decimal places
+income_1$incomePerCapita = round(income_1$incomePerCapita, digits = 1)
+
+#check for duplicates
+if(any(duplicated(income_1$masterdemoid))){message("People have difference incomes at different timepoints")}
+
+# use jiazhou's map code to pick the lowest date
+income_1 <- merge(income_1, map, by = c("masterdemoid"))
+income_1 <- income_1 %>% 
+  select(-redcap_event_name) %>% 
+  group_by(masterdemoid) %>% 
+  filter(date == min(date))
+income_1 <- income_1[-which(duplicated(income_1$masterdemoid)), ]
+income_1$masterdemoid <- as.character(income_1$masterdemoid)
+# Add this into your main dataframe
+income_1 <- income_1 %>%
+  select(masterdemoid, incomePerCapita, income_household)
+
+income_1$masterdemoid <- as.character(income_1$masterdemoid)
+demo$masterdemoid <- as.character(demo$masterdemoid)
+
+demo <- left_join(demo, income_1, by = "masterdemoid", all.x = T)
+
+demo[is.na(demo)] <- -1
+#################################################################################
+demo
+
 ui <- fluidPage(
   titlePanel("Data Visualization"),
   sidebarLayout(
     sidebarPanel(
       sliderInput("ageSlider", "Age Range:",min =min(demo$age),max =max(demo$age), value =range(demo$age), step = 1),
+      sliderInput("incomeSlider", "Income Range:",min =min(demo$incomePerCapita),max =max(demo$incomePerCapita), value =range(demo$incomePerCapita), step = 1),
       checkboxGroupInput("varChecks", "Variables to Display:", names(demo), names(demo))
     ),
     mainPanel(
@@ -137,11 +191,15 @@ ui <- fluidPage(
 
 server <- function(input, output, session) 
 {
-  demo2 = demo[sample(nrow(demo), 643),]
-  output$table = DT::renderDataTable({
-    DT::datatable(demo2[demo$age >= input$ageSlider[1] & demo$age <= input$ageSlider[2], input$varChecks, drop = FALSE],
-                  options = list(paging=TRUE, processing=FALSE),
-                  class = "display")
+  demo2 = demo[sample(nrow(demo), 645),]
+  output$table = DT::renderDT({
+    DT::datatable(demo2[demo2$age >= input$ageSlider[1] & demo2$age <= input$ageSlider[2] & demo2$incomePerCapita >= input$incomeSlider[1] & demo2$incomePerCapita <= input$incomeSlider[2], 
+                        input$varChecks, drop = FALSE],options = list(paging=TRUE, processing=FALSE),class = "display", rownames= FALSE)
+  }, server = FALSE)
+  
+  demo_r <- reactive({
+    demo2[demo2$age >= input$ageSlider[1] & demo2$age <= input$ageSlider[2] & demo2$incomePerCapita >= input$incomeSlider[1] & demo2$incomePerCapita <= input$incomeSlider[2], 
+          input$varChecks]
   })
   
   output$download <- downloadHandler(
@@ -149,7 +207,7 @@ server <- function(input, output, session)
       paste0("downloadFile", ".csv")
     },
     content = function(file) {
-      write.csv(as.data.frame(demo2), file)
+      write.csv(demo_r(), file)
     }
   )
 }
@@ -157,6 +215,26 @@ server <- function(input, output, session)
 shinyApp(ui, server)
 
 
+
+
+
+
+
+
+# demo2 = demo[sample(nrow(demo), 643),]
+# output$table = DT::renderDataTable({
+#   DT::datatable(demo2[demo2$age >= input$ageSlider[1] & demo2$age <= input$ageSlider[2] & demo2$incomePerCapita >= input$incomeSlider[1] & demo2$incomePerCapita <= input$incomeSlider[2], 
+#                       input$varChecks, drop = FALSE],options = list(paging=TRUE, processing=FALSE),class = "display", rownames= FALSE)
+# }, server = FALSE)
+# 
+# output$download <- downloadHandler(
+#   filename = function() {
+#     paste0("downloadFile", ".csv")
+#   },
+#   content = function(file) {
+#     write.csv(demo2[input$table_rows_all, ], file)
+#   }
+# )
 
 
 # Export
