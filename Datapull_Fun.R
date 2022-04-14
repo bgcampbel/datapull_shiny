@@ -11,6 +11,7 @@ library("lubridate")
 library("quest")
 library("shiny")
 library("plotly")
+library(DT)
 
 # Get data from each protocol
 # pull demographic data from ptcs$masterdemo 
@@ -21,7 +22,6 @@ idMap <- demographics$data %>% select(masterdemoid = registration_redcapid, wpic
 protect <- bsrc.checkdatabase2(ptcs$protect, batch_size = 500L, online = T)
 
 ############ Set up ############################################################ 
-
 # Step 1: pull eligible data
 eligible <- demographics$data %>% 
   select(matches("registration_redcapid|ptcstat___pro|ptcstat___sui|term_reason_pro|term_reason_sui|excl_sui|excl_pro")) %>%
@@ -33,7 +33,6 @@ eligible <- eligible %>%
 
 IDlist <- eligible$registration_redcapid
 
-# check - yama's code
 any(duplicated(eligible$registration_redcapid)) # Only 1 ID a row
 
 # Tidy database: change ID column as masterdemoid - yama's code
@@ -47,7 +46,7 @@ MDdata <- demographics$data %>%
   filter(registration_redcapid %in% IDlist) %>% 
   select(masterdemoid = registration_redcapid, everything())
 
-#~~~~~~~~~~~~~~~~
+#################################################################################
 ### Date map for protect
 # Get the map of dates for each event
 map <- bsrc.getIDDateMap(db = protect)
@@ -55,25 +54,6 @@ map <- bsrc.findid(map, idmap = idMap, "registration_redcapid") # map ID
 map <- map %>% 
   select(masterdemoid, redcap_event_name, date)
 map$masterdemoid <- as.character(map$masterdemoid) # for merging purpose later
-#~~~~~~~~~~~~~~~~
-
-### SEPARATE ####################################################################
-# protect1 <- eligible %>%
-#   filter_at(vars("registration_ptcstat___protect"), all_vars(. == 1)) %>%
-#   select(registration_redcapid, registration_ptcstat___protect) %>%
-#   as.data.frame()
-# protect2 <- eligible %>%
-#   filter_at(vars("registration_ptcstat___protect2"), all_vars(. == 1)) %>%
-#   select(registration_redcapid, registration_ptcstat___protect2) %>%
-#   as.data.frame()
-# protect3 <- eligible %>%
-#   filter_at(vars("registration_ptcstat___protect3"), all_vars(. == 1)) %>%
-#   select(registration_redcapid, registration_ptcstat___protect3) %>%
-#   as.data.frame()
-# suicide <- eligible %>%
-#   filter_at(vars("registration_ptcstat___suicide"), all_vars(. == 1))
-# suicid2 <- eligible %>%
-#   filter_at(vars("registration_ptcstat___suicid2"), all_vars(. == 1))
 #################################################################################
 ## Step 2: pull demographics
 # From MD database
@@ -88,10 +68,11 @@ demo <- MDdata %>%
 # Race: make one race variable out of checkbox variables
 demo <- bsrc.checkbox(variablename = "registration_race", dfx = demo) # create a list
 demo <- demo %>%
-  mutate(race = lapply(demo$registration_race, "[[", 1)) %>%
-  mutate(race = ifelse(demo$registration_multirace == 1, 6, demo$race)) # if multirace, race = '6'
+  mutate(race = lapply(demo$registration_race, "[[", 1)) #%>%
+  #mutate(race = ifelse(demo$registration_multirace == 1, 6, demo$race)) # if multirace, race = '6'
 
-# find first consent date
+
+# find first CONSENT DATE
 demo <- demo %>%
   mutate_at(vars(contains("reg_condate")), ~ymd(.)) %>%
   mutate(mindate = pmin(reg_condate_protect, reg_condate_protect2, reg_condate_protect3,
@@ -108,15 +89,59 @@ demo$age <- eeptools::age_calc(dob = dob, enddate = enddate, units = "years", pr
 # check no missing ages - should be 0
 which(is.na(demo$age))
 
-# Step 3: Other demo data: suicide history, income
-### Get suicide history
-
+### Get SUICIDE HISTORY #########################################################
 # Get the suicide history variables that correspond to date and lethality
 demoMinDate <- demo %>%
   select(masterdemoid, mindate) # get consent date
 
-demo <- demo %>%
-  select(masterdemoid, registration_group, registration_dob, registration_gender, age)
+saHx <- MDdata %>% 
+  select(matches("masterdemoid|sadate|lr")) %>% 
+  mutate_all(na_if, "") %>%
+  pivot_longer(cols = sahx_sadate_at1:sahx_lr_at30,
+               names_to = c(".value", "att"),
+               names_prefix = "sahx_",
+               names_sep = "_at") %>%
+  select(masterdemoid, attempt = att, date = sadate, lethality = lr) %>%
+  merge(demoMinDate, by = "masterdemoid") %>%
+  group_by(masterdemoid) %>%
+  filter(date <= mindate) %>% # filter out attempts after consent date
+  mutate(blAtt = n()) %>% # calculate number of baseline attempts
+  mutate(lethality_max = max(lethality, na.rm = T)) %>% # calculate max lethality
+  mutate(lethality_max = ifelse(is.infinite(lethality_max), NA, lethality_max)) %>% # change -inf to NA
+  mutate(attempt_mindate = min(date, na.rm = T)) %>% # calculate earliest attempt date
+  mutate(attempt_mindate = ifelse(is.infinite(attempt_mindate), NA, attempt_mindate)) # change -inf to NA
+
+# find date of highest lethality attempt
+saHx_1 <- saHx %>%
+  filter(lethality_max == lethality) %>%
+  mutate(date_maxLeth = date) %>%
+  select(date_maxLeth, masterdemoid)
+
+saHx <- left_join(saHx, saHx_1, by = "masterdemoid") # merge back with suicide history dataframe
+
+saHx <- saHx %>%
+  arrange(date_maxLeth) %>%
+  distinct(masterdemoid, .keep_all = TRUE) %>%
+  select(masterdemoid, lethality_max, date_maxLeth, attempt_mindate, blAtt)
+
+# check
+any(duplicated(saHx$masterdemoid)) # should be false
+
+# for merging purposes
+saHx$masterdemoid <- as.character(saHx$masterdemoid)
+demo$masterdemoid <- as.character(demo$masterdemoid)
+
+# merge suicide history variables to demographic data frame
+demo <- left_join(demo, saHx, by = "masterdemoid")
+
+#################################################################################
+
+
+
+#################################################################################
+
+#demo <- demo %>%
+#  select(masterdemoid, registration_group, registration_dob, registration_gender, age)
 
 #################################################################################
 income_1 <- PTdata %>%
@@ -168,73 +193,106 @@ demo$masterdemoid <- as.character(demo$masterdemoid)
 
 demo <- left_join(demo, income_1, by = "masterdemoid", all.x = T)
 
-demo[is.na(demo)] <- -1
 #################################################################################
-demo
+# Step 4: Grab variables of interest (e.g., assessments, neuropsych testing)
+### Example 1 - SIS: SIS of most lethal baseline attempt, total and planning subscore(edited)
+# Grab raw data
+
+SISraw <- PTdata %>% 
+  # select master., red., and sis_max_1-18, and sis_recent_1-18
+  select(masterdemoid, redcap_event_name, paste0("sis_max_", c(1:18)), paste0("sis_recent_", c(1:18))) %>%
+  mutate_all(~replace(., .=="", NA)) %>% #idk what this is 
+  filter_at(vars(-masterdemoid,-redcap_event_name),any_vars(!is.na(.))) %>% # remove rows where it's all NA - this is the best way to do it
+  as.data.frame()
+
+# Scoring using `bsrc.score`
+SIS_score <- bsrc.score(SISraw, formname = "sis")
+
+# Map date as the event date
+SIS_score <- merge(SIS_score, map, by = c("masterdemoid", "redcap_event_name"))
+
+# First consent is the baseline date then take the closest ones
+#first instance of this masterdemoid from SIS_score in demo - then, which mindate corresponds to that masterdemoid
+SIS_score$firstconsent <- demo$mindate[match(SIS_score$masterdemoid, demo$masterdemoid)]
+SIS_score$firstconsent
+SIS_score$date <- as.Date(SIS_score$date)
+SIS_score$firstconsent <- as.Date(SIS_score$firstconsent)
+
+SIS_final <- SIS_score %>%
+  # difference between SIS_score date and first consent
+  mutate(date_dif = abs(date - firstconsent)) %>%
+  group_by(masterdemoid) %>%
+  # only use scores closest to first consent
+  filter(date_dif == min(date_dif, na.rm = T)) %>%
+  filter(date_dif <= 30) %>%
+  filter(row_number() == 1)
+
+SIS_final <- SIS_final %>%
+  select(masterdemoid, sis_max_plan, sis_max_total)
+
+#check for duplicates
+any(duplicated(SIS_final$masterdemoid)) 
+
+# Add to original dataframe
+SIS_final$masterdemoid <- as.character(SIS_final$masterdemoid)
+
+demo <- left_join(demo, SIS_final, by = "masterdemoid")
+
+demo$registration_group <- as.factor(demo$registration_group)
+demo$registration_dob <- as.Date(demo$registration_dob)
+demo$masterdemoid <- as.integer(demo$masterdemoid)
+demo$race <- unlist(demo$race)
+#################################################################################
+
+
+
+demo <- demo %>%
+  mutate(incomePerCapita = ifelse(is.na(incomePerCapita), -1, incomePerCapita))
+
+demo <- demo %>%
+  mutate(blAtt = ifelse(is.na(blAtt), 0, blAtt))
+
+demo <- demo %>%
+  mutate(lethality_max = ifelse(is.na(lethality_max), -1, lethality_max))
+
+demo <- demo %>%
+  select(masterdemoid, registration_group, registration_dob, registration_gender, reg_condate_protect3, race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household)
+#################################################################################
 
 ui <- fluidPage(
   titlePanel("Data Visualization"),
   sidebarLayout(
     sidebarPanel(
-      sliderInput("ageSlider", "Age Range:",min =min(demo$age),max =max(demo$age), value =range(demo$age), step = 1),
-      sliderInput("incomeSlider", "Income Range:",min =min(demo$incomePerCapita),max =max(demo$incomePerCapita), value =range(demo$incomePerCapita), step = 1),
-      checkboxGroupInput("varChecks", "Variables to Display:", names(demo), names(demo))
+      # sliderInput("ageSlider", "Age Range:",min =min(demo$age),max =max(demo$age), value =range(demo$age), step = 1),
+       checkboxGroupInput("varChecks", "Variables to Display:", names(demo), names(demo))
     ),
     mainPanel(
         id = 'dataset',
         DT::dataTableOutput("table"),
         downloadButton("download", "Download .csv")
     )
-  )
+  ),
 )
+
+
 
 
 server <- function(input, output, session) 
 {
-  demo2 = demo[sample(nrow(demo), 645),]
+  
+  demo2 <- demo %>%
+    select(masterdemoid, registration_group, registration_dob, registration_gender, reg_condate_protect3, race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household)
   output$table = DT::renderDT({
-    DT::datatable(demo2[demo2$age >= input$ageSlider[1] & demo2$age <= input$ageSlider[2] & demo2$incomePerCapita >= input$incomeSlider[1] & demo2$incomePerCapita <= input$incomeSlider[2], 
-                        input$varChecks, drop = FALSE],options = list(paging=TRUE, processing=FALSE),class = "display", rownames= FALSE)
+    DT::datatable(demo2[,input$varChecks, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
   }, server = FALSE)
   
-  demo_r <- reactive({
-    demo2[demo2$age >= input$ageSlider[1] & demo2$age <= input$ageSlider[2] & demo2$incomePerCapita >= input$incomeSlider[1] & demo2$incomePerCapita <= input$incomeSlider[2], 
-          input$varChecks]
+  output$download = downloadHandler('demo-filtered.csv', content = function(file) {
+    write.csv(demo2[input$table_rows_all, , drop = FALSE], file)
   })
-  
-  output$download <- downloadHandler(
-    filename = function() {
-      paste0("downloadFile", ".csv")
-    },
-    content = function(file) {
-      write.csv(demo_r(), file)
-    }
-  )
 }
 
 shinyApp(ui, server)
 
-
-
-
-
-
-
-
-# demo2 = demo[sample(nrow(demo), 643),]
-# output$table = DT::renderDataTable({
-#   DT::datatable(demo2[demo2$age >= input$ageSlider[1] & demo2$age <= input$ageSlider[2] & demo2$incomePerCapita >= input$incomeSlider[1] & demo2$incomePerCapita <= input$incomeSlider[2], 
-#                       input$varChecks, drop = FALSE],options = list(paging=TRUE, processing=FALSE),class = "display", rownames= FALSE)
-# }, server = FALSE)
-# 
-# output$download <- downloadHandler(
-#   filename = function() {
-#     paste0("downloadFile", ".csv")
-#   },
-#   content = function(file) {
-#     write.csv(demo2[input$table_rows_all, ], file)
-#   }
-# )
 
 
 # Export
