@@ -338,9 +338,17 @@ ui <- fluidPage(
        checkboxGroupInput("varChecks", "Variables to Display:", names(demo), names(demo))
     ),
     mainPanel(
-        id = 'dataset',
-        DT::dataTableOutput("table"),
-        downloadButton("download", "Download .csv")
+      tabsetPanel(
+        type="tabs",
+        tabPanel("protect3", DT::dataTableOutput("protect3table"), downloadButton("download3", "Download .csv")),
+        tabPanel("protect2", DT::dataTableOutput("protect2table"), downloadButton("download2", "Download .csv")),
+        tabPanel("protect1", DT::dataTableOutput("protect1table"), downloadButton("download1", "Download .csv")),
+        tabPanel("suicide", DT::dataTableOutput("suicidetable"), downloadButton("downloads", "Download .csv")),
+        tabPanel("suicid2", DT::dataTableOutput("protect2table"), downloadButton("downloads2", "Download .csv"))
+        ),
+        #id = 'dataset',
+        #DT::dataTableOutput("table"),
+        #downloadButton("download", "Download .csv")
     )
   ),
 )
@@ -350,13 +358,49 @@ server <- function(input, output, session)
   
   demo2 <- demo %>%
     select(masterdemoid, registration_3group, registration_4group, registration_dob, registration_gender, mindate, reg_condate_protect3, reg_condate_protect2, reg_condate_protect,reg_condate_suicide, reg_condate_suicid2,  race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household, exit_total) #%>%
-  output$table = DT::renderDT({
+  output$protect3table = DT::renderDT({
     DT::datatable(demo2[,input$varChecks, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
   }, server = FALSE)
   
-  output$download = downloadHandler('demo-filtered.csv', content = function(file) {
-    write.csv(demo2[input$table_rows_all, , drop = FALSE], file)
+  output$download3 = downloadHandler('demo-filtered.csv', content = function(file) {
+    write.csv(demo2[input$protect3table_rows_all, , drop = FALSE], file)
   })
+#######################  
+  demo3 <- demo %>%
+    select(masterdemoid, registration_3group, registration_4group, registration_dob, registration_gender, mindate, reg_condate_protect3, reg_condate_protect2, reg_condate_protect,reg_condate_suicide, reg_condate_suicid2,  race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household, exit_total) #%>%
+
+   output$protect2table = DT::renderDT({
+    DT::datatable(demo3[,input$varChecks, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
+  }, server = FALSE)
+  
+  output$download2 = downloadHandler('demo-filtered.csv', content = function(file) {
+    write.csv(demo3[input$protect2table_rows_all, , drop = FALSE], file)
+  })
+#######################
+  output$protect1table = DT::renderDT({
+    DT::datatable(demo2[,input$varChecks, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
+  }, server = FALSE)
+  
+  output$download1 = downloadHandler('demo-filtered.csv', content = function(file) {
+    write.csv(demo2[input$protect1table_rows_all, , drop = FALSE], file)
+  })
+#######################
+  output$suicidetable = DT::renderDT({
+    DT::datatable(demo2[,input$varChecks, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
+  }, server = FALSE)
+  
+  output$downloads = downloadHandler('demo-filtered.csv', content = function(file) {
+    write.csv(demo2[input$suicidetable_rows_all, , drop = FALSE], file)
+  })
+#######################
+  output$suicid2table = DT::renderDT({
+    DT::datatable(demo2[,input$varChecks, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
+  }, server = FALSE)
+  
+  output$downloads2 = downloadHandler('demo-filtered.csv', content = function(file) {
+    write.csv(demo2[input$suicid2table_rows_all, , drop = FALSE], file)
+  })
+  
 }
 
 shinyApp(ui, server)
