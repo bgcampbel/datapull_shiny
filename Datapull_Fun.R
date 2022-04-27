@@ -55,15 +55,32 @@ map <- map %>%
   select(masterdemoid, redcap_event_name, date)
 map$masterdemoid <- as.character(map$masterdemoid) # for merging purpose later
 #################################################################################
+
 ## Step 2: pull demographics
 # From MD database
 demo <- MDdata %>% 
-  select(matches("masterdemoid|registration_groupchange|registration_oggroup|condate_pro|dob|condate_sui|registration_group$|gender|edu|race|hispanic")) %>% 
+  select(matches("masterdemoid|registration_groupchange|registration_oggroup|condate_pro|dob|condate_sui|registration_group$|gender|edu|race|hispanic|term_reason_pro|term_reason_sui|excl_sui|excl_pro|reg_term_exclwhy_protect1|reg_term_exclwhy_protect2|reg_term_exclwhy_protect3|reg_term_exclwhy_suicide|reg_term_exclwhy_suicid2")) %>% 
   mutate_all(na_if, "") %>% # make blanks to NA
   mutate( 
     registration_group = ifelse((registration_groupchange == 0 | is.na(registration_groupchange)), registration_group, registration_oggroup),
     registration_gender = recode(registration_gender, `F` = "Female", `M` = "Male")
   )
+
+demo <- demo %>%
+  mutate(reg_term_reason_protect3 = recode(reg_term_reason_protect3, `1`="Completed Study",`2`="Lost to follow-up",`3`="Ineligible after signing consent",`4`="Withdrawn at own/family request", `5`="Withdrawn by PI d/t other reasons (death, unreliability, etc.)"))
+
+demo <- demo %>%
+  mutate(reg_term_reason_protect2 = recode(reg_term_reason_protect2, `1`="Completed Study",`2`="Lost to follow-up",`3`="Ineligible after signing consent",`4`="Withdrawn at own/family request", `5`="Withdrawn by PI d/t other reasons (death, unreliability, etc.)", `6`="Didn't want to move to P3"))
+
+demo <- demo %>%
+  mutate(reg_term_reason_protect = recode(reg_term_reason_protect, `1`="Completed Study",`2`="Lost to follow-up",`3`="Ineligible after signing consent",`4`="Withdrawn at own/family request", `5`="Withdrawn by PI d/t other reasons (death, unreliability, etc.)"))
+
+demo <- demo %>%
+  mutate(reg_term_reason_suicid2 = recode(reg_term_reason_suicid2, `1`="Completed Study",`2`="Lost to follow-up",`3`="Ineligible after signing consent",`4`="Withdrawn at own/family request", `5`="Withdrawn by PI d/t other reasons (death, unreliability, etc.)"))
+
+demo <- demo %>%
+  mutate(reg_term_reason_suicide = recode(reg_term_reason_suicide, `1`="Completed Study",`2`="Lost to follow-up",`3`="Ineligible after signing consent",`4`="Withdrawn at own/family request", `5`="Withdrawn by PI d/t other reasons (death, unreliability, etc.)"))
+
 
 # Race: make one race variable out of checkbox variables
 demo <- bsrc.checkbox(variablename = "registration_race", dfx = demo) # create a list
@@ -135,7 +152,45 @@ demo$masterdemoid <- as.character(demo$masterdemoid)
 demo <- left_join(demo, saHx, by = "masterdemoid")
 
 #################################################################################
+exitraw<- PTdata %>% 
+  select(masterdemoid, redcap_event_name, starts_with("exit_"))%>%
+  mutate_all(~replace(.,.=="",NA)) %>% 
+  filter_at(vars(-masterdemoid,-redcap_event_name, -exit_admin, -exit_complete, -exit_miss,-exit_done___1, -exit_done___ni, -exit_done___nask, -exit_done___asku, -exit_done___na, -exit_miss),any_vars(!is.na(.))) %>% 
+  as.data.frame() 
+exitraw <- exitraw %>% 
+  select(-exit_total)
+any(duplicated(exitraw$masterdemoid))
 
+exitraw <-bsrc.score(df=exitraw, formname="exit")
+
+exitraw$masterdemoid=as.character(exitraw$masterdemoid)
+exit_map <- exitraw %>% 
+  left_join(map, by = c("masterdemoid", "redcap_event_name"))
+
+demo$mindate <- as.Date(demo$mindate)
+
+exit_map <- exit_map %>%
+  mutate(firstconsent = demo$mindate[match(exit_map$masterdemoid,demo$masterdemoid)])
+
+
+
+#exit_map$firstconsent <- as.Date(exit_map$firstconsent)
+exit_map$date <- as.Date(exit_map$date)
+
+exit_final <- exit_map %>% 
+  filter(!is.na(exit_total))%>%
+  mutate(date_dif = abs(date-firstconsent)) %>%
+  group_by(masterdemoid) %>% 
+  #filter(date_dif == min(date_dif, na.rm = F)) %>% 
+  #mutate(date_dif = ifelse(is.infinite(date_dif), NA, date_dif)) %>% # change -inf to NA
+  #filter(date_dif <= 30) %>%
+  slice(1) %>% 
+  select(masterdemoid, exit_total)
+
+anyDuplicated(exit_final$masterdemoid)
+exit_final$masterdemoid=as.character(exit_final$masterdemoid)
+demo$masterdemoid=as.character(demo$masterdemoid)
+demo <- left_join(demo,exit_final, by="masterdemoid")
 
 
 #################################################################################
@@ -239,28 +294,44 @@ SIS_final$masterdemoid <- as.character(SIS_final$masterdemoid)
 demo <- left_join(demo, SIS_final, by = "masterdemoid")
 
 demo$registration_group <- as.factor(demo$registration_group)
+demo$registration_gender <- as.factor(demo$registration_gender)
 demo$registration_dob <- as.Date(demo$registration_dob)
 demo$masterdemoid <- as.integer(demo$masterdemoid)
+demo$date_maxLeth <- as.Date(demo$date_maxLeth)
 demo$race <- unlist(demo$race)
 #################################################################################
 
 
 
-demo <- demo %>%
-  mutate(incomePerCapita = ifelse(is.na(incomePerCapita), -1, incomePerCapita))
+#demo <- demo %>%
+#  mutate(incomePerCapita = ifelse(is.na(incomePerCapita), -1, incomePerCapita))
+
+#demo <- demo %>%
+#  mutate(blAtt = ifelse(is.na(blAtt), 0, blAtt))
+
+#demo <- demo %>%
+#  mutate(lethality_max = ifelse(is.na(lethality_max), -1, lethality_max))
+
+#demo <- demo %>%
+  #mutate(exit_total = ifelse(is.na(exit_total), -1, exit_total))
+demo$exit_total <- as.integer(demo$exit_total)
 
 demo <- demo %>%
-  mutate(blAtt = ifelse(is.na(blAtt), 0, blAtt))
+  mutate(race = recode(race, `1`="American Indian/Alaska Native", `2`="Asian", `3`="Black", `4`="Native Hawaiian/Pacific Islander", `5`="White", `6`="Multirace"))
+
+demo$race <- as.factor(demo$race)
 
 demo <- demo %>%
-  mutate(lethality_max = ifelse(is.na(lethality_max), -1, lethality_max))
+  mutate(registration_4group = registration_group) %>%
+  mutate(registration_3group = recode(registration_group, `IDE`="DNA", `DEP`="DNA", `DNA`="DNA", `ATT`="ATT", `HC`="HC"))
 
 demo <- demo %>%
-  select(masterdemoid, registration_group, registration_dob, registration_gender, reg_condate_protect3, race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household)
+  select(masterdemoid, registration_3group, registration_4group, registration_dob, registration_gender, reg_condate_protect3, reg_condate_protect2, reg_condate_protect,reg_condate_suicide, reg_condate_suicid2,  race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household, exit_total, mindate) #%>%
+  #rename(group = registration_group, DoB = registration_dob, gender = registration_gender, consent_date = reg_condate_protect3, max_lethality = lethality_max, date_max_lethality = date_maxLeth, num_baseline_attempts = blAtt, exit = exit_total)
 #################################################################################
 
 ui <- fluidPage(
-  titlePanel("Data Visualization"),
+  titlePanel(""),
   sidebarLayout(
     sidebarPanel(
       # sliderInput("ageSlider", "Age Range:",min =min(demo$age),max =max(demo$age), value =range(demo$age), step = 1),
@@ -274,14 +345,11 @@ ui <- fluidPage(
   ),
 )
 
-
-
-
 server <- function(input, output, session) 
 {
   
   demo2 <- demo %>%
-    select(masterdemoid, registration_group, registration_dob, registration_gender, reg_condate_protect3, race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household)
+    select(masterdemoid, registration_3group, registration_4group, registration_dob, registration_gender, mindate, reg_condate_protect3, reg_condate_protect2, reg_condate_protect,reg_condate_suicide, reg_condate_suicid2,  race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household, exit_total) #%>%
   output$table = DT::renderDT({
     DT::datatable(demo2[,input$varChecks, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
   }, server = FALSE)
@@ -299,4 +367,3 @@ shinyApp(ui, server)
 #write_csv(demo_final, file = "/home/bgcampbell/Desktop/sheet",".csv")
 #library("writexl")
 #df <- as.data.frame(df)
-write_xlsx(demo_final, "./file.xlsx")
