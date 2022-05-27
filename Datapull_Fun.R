@@ -65,7 +65,7 @@ demo <- MDdata %>%
     registration_group = ifelse((registration_groupchange == 0 | is.na(registration_groupchange)), registration_group, registration_oggroup),
     registration_gender = recode(registration_gender, `F` = "Female", `M` = "Male")
   )
-
+# Recode reason for terminated for specific reason
 demo <- demo %>%
   mutate(reg_term_reason_protect3 = recode(reg_term_reason_protect3, `1`="Completed Study",`2`="Lost to follow-up",`3`="Ineligible after signing consent",`4`="Withdrawn at own/family request", `5`="Withdrawn by PI d/t other reasons (death, unreliability, etc.)"))
 
@@ -106,8 +106,10 @@ demo$age <- eeptools::age_calc(dob = dob, enddate = enddate, units = "years", pr
 # check no missing ages - should be 0
 which(is.na(demo$age))
 
-### Get SUICIDE HISTORY #########################################################
-# Get the suicide history variables that correspond to date and lethality
+######## SPECIFIC ASSESSMENTS ############################################
+##########################################################################
+########## SUICIDE HISTORY #########################################################
+
 demoMinDate <- demo %>%
   select(masterdemoid, mindate) # get consent date
 
@@ -152,6 +154,8 @@ demo$masterdemoid <- as.character(demo$masterdemoid)
 demo <- left_join(demo, saHx, by = "masterdemoid")
 
 #################################################################################
+############# EXIT ##########################################
+
 exitraw<- PTdata %>% 
   select(masterdemoid, redcap_event_name, starts_with("exit_"))%>%
   mutate_all(~replace(.,.=="",NA)) %>% 
@@ -159,7 +163,8 @@ exitraw<- PTdata %>%
   as.data.frame() 
 exitraw <- exitraw %>% 
   select(-exit_total)
-any(duplicated(exitraw$masterdemoid))
+exitraw <- exitraw %>%
+  distinct(exitraw$masterdemoid, .keep_all = T)
 
 exitraw <-bsrc.score(df=exitraw, formname="exit")
 
@@ -174,7 +179,7 @@ exit_map <- exit_map %>%
 
 
 
-#exit_map$firstconsent <- as.Date(exit_map$firstconsent)
+exit_map$firstconsent <- as.Date(exit_map$firstconsent)
 exit_map$date <- as.Date(exit_map$date)
 
 exit_final <- exit_map %>% 
@@ -199,6 +204,8 @@ demo <- left_join(demo,exit_final, by="masterdemoid")
 #  select(masterdemoid, registration_group, registration_dob, registration_gender, age)
 
 #################################################################################
+################ INCOME #########################################
+
 income_1 <- PTdata %>%
   select(masterdemoid, macarthur_6, macarthur_7) %>%
   filter_at(vars(2,3), any_vars(!is.na(.))) %>%
@@ -249,9 +256,7 @@ demo$masterdemoid <- as.character(demo$masterdemoid)
 demo <- left_join(demo, income_1, by = "masterdemoid", all.x = T)
 
 #################################################################################
-# Step 4: Grab variables of interest (e.g., assessments, neuropsych testing)
-### Example 1 - SIS: SIS of most lethal baseline attempt, total and planning subscore(edited)
-# Grab raw data
+############ SIS ###########################################
 
 SISraw <- PTdata %>% 
   # select master., red., and sis_max_1-18, and sis_recent_1-18
@@ -293,6 +298,50 @@ SIS_final$masterdemoid <- as.character(SIS_final$masterdemoid)
 
 demo <- left_join(demo, SIS_final, by = "masterdemoid")
 
+###########################################################3
+######## SSI ##########################################################
+
+ssiraw<- PTdata %>% 
+  select(masterdemoid, redcap_event_name, starts_with("ssi_"))%>%
+  mutate_all(~replace(.,.=="",NA)) %>% 
+  as.data.frame() 
+
+ssiraw <- ssiraw %>%
+  distinct(masterdemoid, .keep_all = T)
+
+ssiraw <-bsrc.score(df=ssiraw, formname="ssi")
+
+ssiraw$masterdemoid=as.character(ssiraw$masterdemoid)
+ssi_map <- ssiraw %>% 
+  left_join(map, by = c("masterdemoid", "redcap_event_name"))
+
+
+
+ssi_map <- ssi_map %>%
+  mutate(firstconsent = (demo$mindate[match(ssi_map$masterdemoid, demo$masterdemoid)]))
+
+
+ssi_map$firstconsent <- as.Date(ssi_map$firstconsent)
+ssi_map$date <- as.Date(ssi_map$date)
+
+ssi_final <- ssi_map %>% 
+  filter(!is.na(SSI_worst), !is.na(SSI_current), !is.na(date))
+
+ssi_final <- ssi_final %>%
+  mutate(date_dif = abs(date-ssi_final$firstconsent)) #%>%
+  group_by(ssi_final$masterdemoid) %>% 
+  filter(date_dif == min(date_dif, na.rm = F)) %>% 
+  mutate(date_dif = ifelse(is.infinite(date_dif), NA, date_dif)) %>% # change -inf to NA
+  filter(date_dif <= 30) %>%
+  slice(1) %>% 
+  select(ssi_final$masterdemoid, SSI_worst, SSI_current)
+
+anyDuplicated(ssi_final$masterdemoid)
+ssi_final$masterdemoid=as.character(ssi_final$masterdemoid)
+demo$masterdemoid=as.character(demo$masterdemoid)
+demo <- left_join(demo,ssi_final, by="masterdemoid")
+
+############################################################
 demo$registration_group <- as.factor(demo$registration_group)
 demo$registration_gender <- as.factor(demo$registration_gender)
 demo$registration_dob <- as.Date(demo$registration_dob)
@@ -300,8 +349,6 @@ demo$masterdemoid <- as.integer(demo$masterdemoid)
 demo$date_maxLeth <- as.Date(demo$date_maxLeth)
 demo$race <- unlist(demo$race)
 #################################################################################
-
-
 
 #demo <- demo %>%
 #  mutate(incomePerCapita = ifelse(is.na(incomePerCapita), -1, incomePerCapita))
@@ -314,6 +361,8 @@ demo$race <- unlist(demo$race)
 
 #demo <- demo %>%
   #mutate(exit_total = ifelse(is.na(exit_total), -1, exit_total))
+
+#fixups
 demo$exit_total <- as.integer(demo$exit_total)
 
 demo <- demo %>%
@@ -326,86 +375,119 @@ demo <- demo %>%
   mutate(registration_3group = recode(registration_group, `IDE`="DNA", `DEP`="DNA", `DNA`="DNA", `ATT`="ATT", `HC`="HC"))
 
 demo <- demo %>%
-  select(masterdemoid, registration_3group, registration_4group, registration_dob, registration_gender, reg_condate_protect3, reg_condate_protect2, reg_condate_protect,reg_condate_suicide, reg_condate_suicid2,  race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household, exit_total, mindate) #%>%
-  #rename(group = registration_group, DoB = registration_dob, gender = registration_gender, consent_date = reg_condate_protect3, max_lethality = lethality_max, date_max_lethality = date_maxLeth, num_baseline_attempts = blAtt, exit = exit_total)
-#################################################################################
+  select(masterdemoid, registration_3group, registration_4group, registration_dob, registration_gender, mindate, reg_condate_protect3, reg_condate_protect2, reg_condate_protect,reg_condate_suicide, reg_condate_suicid2,  race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household, exit_total) #%>%
+  
+demo_protect3 <- demo %>%
+  filter(mindate == reg_condate_protect3)
 
-ui <- fluidPage(
-  titlePanel(""),
-  sidebarLayout(
-    sidebarPanel(
-      # sliderInput("ageSlider", "Age Range:",min =min(demo$age),max =max(demo$age), value =range(demo$age), step = 1),
-       checkboxGroupInput("varChecks", "Variables to Display:", names(demo), names(demo))
-    ),
-    mainPanel(
-      tabsetPanel(
-        type="tabs",
-        tabPanel("protect3", DT::dataTableOutput("protect3table"), downloadButton("download3", "Download .csv")),
-        tabPanel("protect2", DT::dataTableOutput("protect2table"), downloadButton("download2", "Download .csv")),
-        tabPanel("protect1", DT::dataTableOutput("protect1table"), downloadButton("download1", "Download .csv")),
-        tabPanel("suicide", DT::dataTableOutput("suicidetable"), downloadButton("downloads", "Download .csv")),
-        tabPanel("suicid2", DT::dataTableOutput("protect2table"), downloadButton("downloads2", "Download .csv"))
-        ),
-        #id = 'dataset',
-        #DT::dataTableOutput("table"),
-        #downloadButton("download", "Download .csv")
-    )
-  ),
-)
+demo_protect2 <- demo %>%
+  filter(mindate == reg_condate_protect2)
+
+demo_protect1 <- demo %>%
+  filter(mindate == reg_condate_protect)
+
+demo_suicide <- demo %>%
+  filter(mindate == reg_condate_suicide)
+
+demo_suicid2 <- demo %>%
+  filter(mindate == reg_condate_suicid2)
+
+
+demo3 <- demo_protect3 %>%
+     select(masterdemoid, registration_3group, registration_4group, registration_dob, registration_gender, mindate, reg_condate_protect3, race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household, exit_total) #%>%
+demo2 <- demo_protect2 %>%
+  select(masterdemoid, registration_3group, registration_4group, registration_dob, registration_gender, mindate, reg_condate_protect3, reg_condate_protect2, race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household, exit_total) #%>%
+demo1 <- demo_protect1 %>%
+  select(masterdemoid, registration_3group, registration_4group, registration_dob, registration_gender, mindate, reg_condate_protect3, reg_condate_protect2, reg_condate_protect, race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household, exit_total) #%>%
+demos <- demo_suicide %>%
+  select(masterdemoid, registration_3group, registration_4group, registration_dob, registration_gender, mindate, reg_condate_protect3, reg_condate_protect2, reg_condate_protect,reg_condate_suicide, race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household, exit_total) #%>%
+demos2 <- demo_suicid2 %>%
+  select(masterdemoid, registration_3group, registration_4group, registration_dob, registration_gender, mindate, reg_condate_protect3, reg_condate_protect2, reg_condate_protect,reg_condate_suicide, reg_condate_suicid2,  race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household, exit_total) #%>%
+             
+
+###################################################################################################
+######### SHINY APP ###################################################
+
+ui <- shinyUI(navbarPage("Data",
+                         tabPanel("Protect3",
+                                  sidebarPanel(checkboxGroupInput("varCheck3", "Variables to Display:", names(demo3), names(demo3))),
+                                  mainPanel(DT::dataTableOutput("protect3table"), downloadButton("download3", "Download .csv"))
+                         ),
+                         tabPanel("Protect2",
+                                  sidebarPanel(checkboxGroupInput("varCheck2", "Variables to Display:", names(demo2), names(demo2))),
+                                  mainPanel(DT::dataTableOutput("protect2table"), downloadButton("download2", "Download .csv"))
+                         ),
+                         tabPanel("Protect1",
+                                  sidebarPanel(checkboxGroupInput("varCheck1", "Variables to Display:", names(demo1), names(demo1))),
+                                  mainPanel(DT::dataTableOutput("protect1table"), downloadButton("download1", "Download .csv"))
+                         ),
+                         tabPanel("Suicide",
+                                  sidebarPanel(checkboxGroupInput("varChecks", "Variables to Display:", names(demos), names(demos))),
+                                  mainPanel(DT::dataTableOutput("suicidetable"), downloadButton("downloads", "Download .csv"))
+                         ),
+                         tabPanel("Suicid2",
+                                  sidebarPanel(checkboxGroupInput("varChecks2", "Variables to Display:", names(demos2), names(demos2))),
+                                  mainPanel(DT::dataTableOutput("suicid2table"), downloadButton("downloads2", "Download .csv"))
+                         )
+))
 
 server <- function(input, output, session) 
 {
   
-  demo2 <- demo %>%
-    select(masterdemoid, registration_3group, registration_4group, registration_dob, registration_gender, mindate, reg_condate_protect3, reg_condate_protect2, reg_condate_protect,reg_condate_suicide, reg_condate_suicid2,  race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household, exit_total) #%>%
+  demo3 <- demo3
+  
   output$protect3table = DT::renderDT({
-    DT::datatable(demo2[,input$varChecks, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
+    DT::datatable(demo3[,input$varCheck3, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
   }, server = FALSE)
-  
   output$download3 = downloadHandler('demo-filtered.csv', content = function(file) {
-    write.csv(demo2[input$protect3table_rows_all, , drop = FALSE], file)
-  })
-#######################  
-  demo3 <- demo %>%
-    select(masterdemoid, registration_3group, registration_4group, registration_dob, registration_gender, mindate, reg_condate_protect3, reg_condate_protect2, reg_condate_protect,reg_condate_suicide, reg_condate_suicid2,  race, age, lethality_max, date_maxLeth, blAtt, incomePerCapita, income_household, exit_total) #%>%
+     write.csv(demo3[input$protect3table_rows_all, , drop = FALSE], file)
+     })
 
-   output$protect2table = DT::renderDT({
-    DT::datatable(demo3[,input$varChecks, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
-  }, server = FALSE)
+  #######################
   
+  demo2 <- demo2
+  
+  output$protect2table = DT::renderDT({
+    DT::datatable(demo2[,input$varCheck2, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
+  }, server = FALSE)
   output$download2 = downloadHandler('demo-filtered.csv', content = function(file) {
-    write.csv(demo3[input$protect2table_rows_all, , drop = FALSE], file)
+    write.csv(demo2[input$protect2table_rows_all, , drop = FALSE], file)
   })
-#######################
+  #######################
+  
+  demo1 <- demo1
+  
   output$protect1table = DT::renderDT({
-    DT::datatable(demo2[,input$varChecks, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
+    DT::datatable(demo1[,input$varCheck1, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
   }, server = FALSE)
-  
   output$download1 = downloadHandler('demo-filtered.csv', content = function(file) {
-    write.csv(demo2[input$protect1table_rows_all, , drop = FALSE], file)
+    write.csv(demo1[input$protect2table_rows_all, , drop = FALSE], file)
   })
-#######################
+  
+  #######################
+  
+  demos <- demos
+  
   output$suicidetable = DT::renderDT({
-    DT::datatable(demo2[,input$varChecks, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
+    DT::datatable(demos[,input$varChecks, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
   }, server = FALSE)
-  
   output$downloads = downloadHandler('demo-filtered.csv', content = function(file) {
-    write.csv(demo2[input$suicidetable_rows_all, , drop = FALSE], file)
+    write.csv(demos[input$suicidetable_rows_all, , drop = FALSE], file)
   })
-#######################
+  
+  #######################
+  
+  demos2 <- demos2
+  
   output$suicid2table = DT::renderDT({
-    DT::datatable(demo2[,input$varChecks, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
+    DT::datatable(demos2[,input$varChecks2, drop = FALSE],filter = "bottom",extensions = 'Buttons', options = list(paging=TRUE, processing=FALSE, buttons = c("copy", "csv", "pdf")), class = "display", rownames= FALSE)
   }, server = FALSE)
-  
   output$downloads2 = downloadHandler('demo-filtered.csv', content = function(file) {
-    write.csv(demo2[input$suicid2table_rows_all, , drop = FALSE], file)
+    write.csv(demos2[input$suicid2table_rows_all, , drop = FALSE], file)
   })
-  
 }
 
 shinyApp(ui, server)
-
-
 
 # Export
 #write_csv(demo_final, file = "/home/bgcampbell/Desktop/sheet",".csv")
